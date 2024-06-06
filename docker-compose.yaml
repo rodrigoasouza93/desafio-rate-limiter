@@ -1,0 +1,30 @@
+services:
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./docker/redisdata:/data
+    networks:
+      - db
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+    networks:
+      - db
+
+volumes:
+  redisdata:
+    driver: local
+
+networks:
+  db:
+    driver: bridge
