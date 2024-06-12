@@ -1,118 +1,88 @@
 package main
 
 import (
-	"io"
-	"net/http"
-	"net/http/httptest"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/rodrigoasouza93/desafio-rate-limiter/configs"
-	"github.com/rodrigoasouza93/desafio-rate-limiter/internal/infra/database/redis"
-	"github.com/rodrigoasouza93/desafio-rate-limiter/internal/infra/middleware"
-	"github.com/stretchr/testify/assert"
+	"github.com/go-redis/redis/v8"
+	"github.com/joho/godotenv"
+	"github.com/rodrigoasouza93/desafio-rate-limiter/internal/infra"
+	"golang.org/x/time/rate"
 )
 
 func TestRateLimiter(t *testing.T) {
-	configs, err := configs.GetConfig(".")
+
+	err := godotenv.Load()
 	if err != nil {
-		panic(err)
+		t.Fatalf("Error loading .env file: %v", err)
 	}
-	repo := redis.NewRedisLimiterRepo("localhost:6379", "", 0)
-	limiter := middleware.NewRateLimiter(repo, configs.GetLimitConfig())
-	router := http.NewServeMux()
-	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Hello World!"))
+
+	redisAddr := os.Getenv("REDIS_ADDR")
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	redisDB, _ := strconv.Atoi(os.Getenv("REDIS_DB"))
+
+	rateLimitIP, _ := strconv.Atoi(os.Getenv("RATE_LIMIT_IP"))
+	rateLimitToken, _ := strconv.Atoi(os.Getenv("RATE_LIMIT_TOKEN"))
+	blockTime, _ := strconv.Atoi(os.Getenv("BLOCK_TIME_SECONDS"))
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+		DB:       redisDB,
 	})
 
-	ts := httptest.NewServer(limiter.Limit(router))
-	defer ts.Close()
+	persistence := infra.NewRedisPersistence(redisClient)
+	rl := infra.NewRateLimiter(persistence, rate.Limit(rateLimitIP), rate.Limit(rateLimitToken), time.Duration(blockTime)*time.Second)
 
-	for i := 0; i < 10; i++ {
-		req, err := http.NewRequest("GET", ts.URL, nil)
-		if err != nil {
-			t.Fatalf("Error creating request: %v", err)
-			return
-		}
+	key := "test_ip"
+	isToken := false
 
-		req.Header.Add("API_KEY", "apitoken")
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Error creating request: %v", err)
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Error parsing response body: %v", err)
-		}
-
-		if i <= 4 {
-			assert.Equal(t, http.StatusOK, resp.StatusCode, "Status should be 200 OK")
-			assert.Equal(t, "Hello World!", string(body), "Response body should be 'Hello World!'")
-		} else {
-			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "Status should be 429 Too Many Requests")
-			assert.Equal(t, "you have reached the maximum number of requests or actions allowed within a certain time frame\n", string(body), "Response body should be 'you have reached the maximum number of requests or actions allowed within a certain time frame'")
+	for i := 0; i < rateLimitIP; i++ {
+		if !rl.Allow(key, isToken) {
+			t.Errorf("Expected to allow request %d", i+1)
 		}
 	}
 
-	for i := 0; i < 10; i++ {
-		req, err := http.NewRequest("GET", ts.URL, nil)
-		if err != nil {
-			t.Fatalf("Error creating request: %v", err)
-			return
-		}
+	if rl.Allow(key, isToken) {
+		t.Errorf("Expected to block request")
+	}
 
-		req.Header.Add("API_KEY", "xyz987654")
+	rl.Block(key, isToken)
 
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Error creating request: %v", err)
-		}
-		defer resp.Body.Close()
+	if !rl.IsBlocked(key) {
+		t.Errorf("Expected key to be blocked")
+	}
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Error parsing response body: %v", err)
-		}
+	time.Sleep(time.Duration(blockTime) * time.Second)
 
-		if i <= 2 {
-			assert.Equal(t, http.StatusOK, resp.StatusCode, "Status should be 200 OK")
-			assert.Equal(t, "Hello World!", string(body), "Response body should be 'Hello World!'")
-		} else {
-			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "Status should be 429 Too Many Requests")
-			assert.Equal(t, "you have reached the maximum number of requests or actions allowed within a certain time frame\n", string(body), "Response body should be 'you have reached the maximum number of requests or actions allowed within a certain time frame'")
+	if rl.IsBlocked(key) {
+		t.Errorf("Expected key to be unblocked")
+	}
+
+	key = "test_token"
+	isToken = true
+
+	for i := 0; i < rateLimitToken; i++ {
+		if !rl.Allow(key, isToken) {
+			t.Errorf("Expected to allow request %d", i+1)
 		}
 	}
 
-	t.Log("Standing by for 6 seconds in order to test further")
-	time.Sleep(6 * time.Second)
+	if rl.Allow(key, isToken) {
+		t.Errorf("Expected to block request")
+	}
 
-	for i := 0; i < 10; i++ {
-		req, err := http.NewRequest("GET", ts.URL, nil)
-		if err != nil {
-			t.Fatalf("Error creating request: %v", err)
-			return
-		}
+	rl.Block(key, isToken)
 
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Error creating requestT: %v", err)
-		}
-		defer resp.Body.Close()
+	if !rl.IsBlocked(key) {
+		t.Errorf("Expected key to be blocked")
+	}
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Error parsing body: %v", err)
-		}
+	time.Sleep(time.Duration(blockTime) * time.Second)
 
-		if i <= 2 {
-			assert.Equal(t, http.StatusOK, resp.StatusCode, "Status should be 200 OK")
-			assert.Equal(t, "Hello World!", string(body), "Response body should be 'Hello World!'")
-		} else {
-			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "Status should be 429 Too Many Requests")
-			assert.Equal(t, "you have reached the maximum number of requests or actions allowed within a certain time frame\n", string(body), "Response body should be 'you have reached the maximum number of requests or actions allowed within a certain time frame'")
-		}
+	if rl.IsBlocked(key) {
+		t.Errorf("Expected key to be unblocked")
 	}
 }
