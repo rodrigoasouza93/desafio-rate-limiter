@@ -8,21 +8,22 @@ import (
 
 type (
 	configs struct {
-		Port           string `mapstructure:"PORT"`
-		Host           string `mapstructure:"DB_HOST"`
-		IpLimit        int    `mapstructure:"IP_LIMIT"`
-		TokenLimit     int    `mapstructure:"TOKEN_LIMIT"`
-		IpBlockTime    int    `mapstructure:"IP_BLOCK_TIME"`
-		TokenBlockTime int    `mapstructure:"TOKEN_BLOCK_TIME"`
-		AllowedToken   string `mapstructure:"ALLOWED_TOKEN"`
+		Port                      string           `mapstructure:"PORT"`
+		Host                      string           `mapstructure:"DB_HOST"`
+		IpLimit                   int              `mapstructure:"IP_LIMIT"`
+		TokenLimit                int              `mapstructure:"TOKEN_LIMIT"`
+		IpBlockTime               int              `mapstructure:"IP_BLOCK_TIME"`
+		TokenBlockTime            int              `mapstructure:"TOKEN_BLOCK_TIME"`
+		TokenMaxRequestsPerSecond map[string]int64 `mapstructure:"TOKEN_MAX_REQUESTS_PER_SECOND"`
 	}
 
 	LimitConfig struct {
-		MaxRequestsIp    int
-		MaxRequestsToken int
-		AllowedToken     string
-		IpBlockTime      time.Duration
-		TokenBlockTime   time.Duration
+		MaxRequestsIp             int
+		MaxRequestsToken          int
+		AllowedToken              string
+		IpBlockTime               time.Duration
+		TokenBlockTime            time.Duration
+		TokenMaxRequestsPerSecond map[string]int64 `mapstructure:"TOKEN_MAX_REQUESTS_PER_SECOND"`
 	}
 )
 
@@ -47,10 +48,10 @@ func GetConfig(path string) (*configs, error) {
 
 func (c *configs) GetLimitConfig() LimitConfig {
 	return LimitConfig{
-		MaxRequestsIp:    c.IpLimit,
-		MaxRequestsToken: c.TokenLimit,
-		AllowedToken:     c.AllowedToken,
-		IpBlockTime:      time.Duration(c.IpBlockTime) * time.Second,
-		TokenBlockTime:   time.Duration(c.TokenBlockTime) * time.Second,
+		MaxRequestsIp:             c.IpLimit,
+		MaxRequestsToken:          c.TokenLimit,
+		TokenMaxRequestsPerSecond: c.TokenMaxRequestsPerSecond,
+		IpBlockTime:               time.Duration(c.IpBlockTime) * time.Second,
+		TokenBlockTime:            time.Duration(c.TokenBlockTime) * time.Second,
 	}
 }
